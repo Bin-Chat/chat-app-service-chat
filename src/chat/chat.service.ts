@@ -5,25 +5,31 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { FilterQuery, Model, Types } from 'mongoose';
 
 import { CHAT_EVENTS } from '../kafka/events/chat.events';
 import { KafkaProducerService } from '../kafka/kafka-producer.service';
 
 import { AddMembersDto } from './dto/add-members.dto';
+import { BanMemberDto } from './dto/ban-member.dto';
 import { ChangeRoleDto } from './dto/change-role.dto';
 import { CreateConversationDto } from './dto/create-conversation.dto';
+import { EditMessageDto } from './dto/edit-message.dto';
 import { ForwardMessageDto } from './dto/forward-message.dto';
 import { ReactMessageDto } from './dto/react-message.dto';
-import { RemoveMemberDto } from './dto/remove-member.dto';
 import { SendMessageDto } from './dto/send-message.dto';
 import { TransferOwnerDto } from './dto/transfer-owner.dto';
 import { UpdateGroupDto } from './dto/update-group.dto';
+import { UpdateMySettingsDto } from './dto/update-my-settings.dto';
+import { UpdateSettingsDto } from './dto/update-settings.dto';
 import { checkGroupRole } from './guards/group-role.guard';
 import { Conversation, ConversationDocument } from './schemas/conversation.schema';
 import { Message, MessageDocument } from './schemas/message.schema';
 
-const REVOKE_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
+const REVOKE_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours
+const EDIT_WINDOW_MS = 30 * 60 * 1000; // 30 minutes
+const MAX_ADMINS = 5;
+const MAX_PINNED_MESSAGES = 50;
 
 @Injectable()
 export class ChatService {
@@ -76,6 +82,17 @@ export class ChatService {
       participants,
     });
 
+    // Notify other participants about the new group so their UI updates in real-time
+    if (dto.type === 'group') {
+      const otherMemberIds = allParticipantIds.filter((id) => id !== userId);
+      await this.kafkaProducer.emit(CHAT_EVENTS.GROUP_MEMBERS_ADDED, {
+        conversationId: conversation._id.toString(),
+        addedBy: userId,
+        newMemberIds: otherMemberIds,
+        participants: allParticipantIds,
+      });
+    }
+
     return conversation;
   }
 
@@ -103,7 +120,7 @@ export class ChatService {
   async getMessages(userId: string, conversationId: string, cursor?: string, limit = 30) {
     const conv = await this.ensureParticipant(userId, conversationId);
 
-    const filter: any = {
+    const filter: FilterQuery<MessageDocument> = {
       conversationId: conv._id,
       deletedFor: { $ne: userId },
     };
@@ -126,6 +143,28 @@ export class ChatService {
 
   async sendMessage(userId: string, conversationId: string, dto: SendMessageDto) {
     const conv = await this.ensureParticipant(userId, conversationId);
+
+    // Check if user is banned
+    const participant = conv.participants.find((p) => p.userId === userId);
+    if (participant?.isBanned) {
+      const bannedUntil = participant.bannedUntil;
+      if (!bannedUntil || bannedUntil > new Date()) {
+        throw new ForbiddenException('Bạn đã bị cấm gửi tin nhắn trong nhóm này');
+      }
+      // Ban expired — auto-unban
+      await this.conversationModel.updateOne(
+        { _id: conv._id, 'participants.userId': userId },
+        { $set: { 'participants.$.isBanned': false, 'participants.$.bannedUntil': null } }
+      );
+    }
+
+    // Check onlyAdminCanSend setting for group chats
+    if (conv.type === 'group' && conv.settings?.onlyAdminCanSend) {
+      const role = participant?.role;
+      if (role !== 'owner' && role !== 'admin') {
+        throw new ForbiddenException('Chỉ admin mới được gửi tin nhắn trong nhóm này');
+      }
+    }
 
     if (!dto.content?.trim() && (!dto.attachments || dto.attachments.length === 0)) {
       throw new BadRequestException('Tin nhắn phải có nội dung hoặc file đính kèm');
@@ -181,7 +220,7 @@ export class ChatService {
 
     const elapsed = Date.now() - message.createdAt.getTime();
     if (elapsed > REVOKE_WINDOW_MS) {
-      throw new BadRequestException('Chỉ có thể thu hồi tin nhắn trong vòng 15 phút');
+      throw new BadRequestException('Chỉ có thể thu hồi tin nhắn trong vòng 24 giờ');
     }
 
     message.revokedAt = new Date();
@@ -283,9 +322,15 @@ export class ChatService {
     let action: 'added' | 'removed';
 
     if (existingIndex >= 0) {
+      // Same emoji → toggle off (remove)
       message.reactions.splice(existingIndex, 1);
       action = 'removed';
     } else {
+      // Different emoji or no reaction → replace (1 per user rule)
+      const oldIndex = message.reactions.findIndex((r) => r.userId === userId);
+      if (oldIndex >= 0) {
+        message.reactions.splice(oldIndex, 1);
+      }
       message.reactions.push({ userId, emoji: dto.emoji });
       action = 'added';
     }
@@ -314,9 +359,14 @@ export class ChatService {
     return conv.participants;
   }
 
-  async addMembers(userId: string, conversationId: string, dto: AddMembersDto) {
+  async addMembers(userId: string, conversationId: string, dto: AddMembersDto, actorName = '') {
     const conv = await this.ensureGroupParticipant(userId, conversationId);
-    checkGroupRole(conv.participants, userId, ['owner', 'admin']);
+    const actor = checkGroupRole(conv.participants, userId, ['owner', 'admin', 'member']);
+
+    // Members can only add if allowMemberInvite setting is enabled; admins/owners always can
+    if (actor.role === 'member' && !conv.settings?.allowMemberInvite) {
+      throw new ForbiddenException('Chỉ admin mới có thể thêm thành viên vào nhóm này');
+    }
 
     const existingIds = new Set(conv.participants.map((p) => p.userId));
     const newIds = dto.memberIds.filter((id) => !existingIds.has(id));
@@ -329,11 +379,14 @@ export class ChatService {
 
     await this.conversationModel.updateOne(
       { _id: conv._id },
-      { $push: { participants: { $each: newParticipants } } },
+      { $push: { participants: { $each: newParticipants } } }
     );
 
     // System message
-    await this.insertSystemMessage(conv._id, `đã thêm ${newIds.length} thành viên vào nhóm`);
+    await this.insertSystemMessage(
+      conv._id,
+      `${actorName || '—'} đã thêm ${newIds.length} thành viên vào nhóm`
+    );
 
     const allParticipantIds = [...Array.from(existingIds), ...newIds];
     await this.kafkaProducer.emit(CHAT_EVENTS.GROUP_MEMBERS_ADDED, {
@@ -346,15 +399,15 @@ export class ChatService {
     return { success: true, addedCount: newIds.length };
   }
 
-  async removeMember(userId: string, conversationId: string, dto: RemoveMemberDto) {
+  async removeMember(userId: string, conversationId: string, memberId: string, actorName = '') {
     const conv = await this.ensureGroupParticipant(userId, conversationId);
     const actor = checkGroupRole(conv.participants, userId, ['owner', 'admin']);
 
-    if (dto.memberId === userId) {
+    if (memberId === userId) {
       throw new BadRequestException('Dùng chức năng rời nhóm thay vì tự xoá mình');
     }
 
-    const target = conv.participants.find((p) => p.userId === dto.memberId);
+    const target = conv.participants.find((p) => p.userId === memberId);
     if (!target) {
       throw new BadRequestException('Thành viên không có trong nhóm');
     }
@@ -366,38 +419,40 @@ export class ChatService {
 
     await this.conversationModel.updateOne(
       { _id: conv._id },
-      { $pull: { participants: { userId: dto.memberId } } },
+      { $pull: { participants: { userId: memberId } } }
     );
 
-    await this.insertSystemMessage(conv._id, `đã xoá một thành viên khỏi nhóm`);
+    await this.insertSystemMessage(conv._id, `${actorName || '—'} đã xóa một thành viên khỏi nhóm`);
 
-    const remainingIds = conv.participants.filter((p) => p.userId !== dto.memberId).map((p) => p.userId);
+    const remainingIds = conv.participants
+      .filter((p) => p.userId !== memberId)
+      .map((p) => p.userId);
     await this.kafkaProducer.emit(CHAT_EVENTS.GROUP_MEMBER_REMOVED, {
       conversationId: conv._id.toString(),
       removedBy: userId,
-      removedMemberId: dto.memberId,
-      participants: [...remainingIds, dto.memberId], // notify removed member too
+      removedMemberId: memberId,
+      participants: [...remainingIds, memberId], // notify removed member too
     });
 
     return { success: true };
   }
 
-  async leaveGroup(userId: string, conversationId: string) {
+  async leaveGroup(userId: string, conversationId: string, actorName = '') {
     const conv = await this.ensureGroupParticipant(userId, conversationId);
     const actor = conv.participants.find((p) => p.userId === userId);
 
     if (actor?.role === 'owner') {
       throw new BadRequestException(
-        'Chủ nhóm phải chuyển quyền trước khi rời nhóm. Dùng API chuyển quyền chủ nhóm.',
+        'Chủ nhóm phải chuyển quyền trước khi rời nhóm. Dùng API chuyển quyền chủ nhóm.'
       );
     }
 
     await this.conversationModel.updateOne(
       { _id: conv._id },
-      { $pull: { participants: { userId } } },
+      { $pull: { participants: { userId } } }
     );
 
-    await this.insertSystemMessage(conv._id, `đã rời khỏi nhóm`);
+    await this.insertSystemMessage(conv._id, `${actorName || '—'} đã rời khỏi nhóm`);
 
     const remainingIds = conv.participants.filter((p) => p.userId !== userId).map((p) => p.userId);
     await this.kafkaProducer.emit(CHAT_EVENTS.GROUP_MEMBER_LEFT, {
@@ -409,7 +464,7 @@ export class ChatService {
     return { success: true };
   }
 
-  async updateGroup(userId: string, conversationId: string, dto: UpdateGroupDto) {
+  async updateGroup(userId: string, conversationId: string, dto: UpdateGroupDto, actorName = '') {
     const conv = await this.ensureGroupParticipant(userId, conversationId);
     checkGroupRole(conv.participants, userId, ['owner', 'admin']);
 
@@ -424,7 +479,7 @@ export class ChatService {
 
     await this.conversationModel.updateOne({ _id: conv._id }, { $set: updates });
 
-    await this.insertSystemMessage(conv._id, `đã cập nhật thông tin nhóm`);
+    await this.insertSystemMessage(conv._id, `${actorName || '—'} đã cập nhật thông tin nhóm`);
 
     const participantIds = conv.participants.map((p) => p.userId);
     await this.kafkaProducer.emit(CHAT_EVENTS.GROUP_UPDATED, {
@@ -437,7 +492,7 @@ export class ChatService {
     return { success: true, ...updates };
   }
 
-  async changeRole(userId: string, conversationId: string, dto: ChangeRoleDto) {
+  async changeRole(userId: string, conversationId: string, dto: ChangeRoleDto, actorName = '') {
     const conv = await this.ensureGroupParticipant(userId, conversationId);
     checkGroupRole(conv.participants, userId, ['owner']);
 
@@ -449,13 +504,24 @@ export class ChatService {
       throw new BadRequestException('Không thể thay đổi quyền Chủ nhóm bằng API này');
     }
 
+    // Enforce max 5 admins per group
+    if (dto.role === 'admin') {
+      const currentAdminCount = conv.participants.filter((p) => p.role === 'admin').length;
+      if (currentAdminCount >= MAX_ADMINS) {
+        throw new BadRequestException(`Nhóm chỉ được tối đa ${MAX_ADMINS} phó nhóm`);
+      }
+    }
+
     await this.conversationModel.updateOne(
       { _id: conv._id, 'participants.userId': dto.memberId },
-      { $set: { 'participants.$.role': dto.role } },
+      { $set: { 'participants.$.role': dto.role } }
     );
 
     const roleName = dto.role === 'admin' ? 'Phó nhóm' : 'Thành viên';
-    await this.insertSystemMessage(conv._id, `đã đặt một thành viên làm ${roleName}`);
+    await this.insertSystemMessage(
+      conv._id,
+      `${actorName || '—'} đã đặt một thành viên làm ${roleName}`
+    );
 
     const participantIds = conv.participants.map((p) => p.userId);
     await this.kafkaProducer.emit(CHAT_EVENTS.GROUP_ROLE_CHANGED, {
@@ -469,7 +535,12 @@ export class ChatService {
     return { success: true };
   }
 
-  async transferOwnership(userId: string, conversationId: string, dto: TransferOwnerDto) {
+  async transferOwnership(
+    userId: string,
+    conversationId: string,
+    dto: TransferOwnerDto,
+    actorName = ''
+  ) {
     const conv = await this.ensureGroupParticipant(userId, conversationId);
     checkGroupRole(conv.participants, userId, ['owner']);
 
@@ -484,14 +555,14 @@ export class ChatService {
     // Demote current owner to admin, promote new owner
     await this.conversationModel.updateOne(
       { _id: conv._id, 'participants.userId': userId },
-      { $set: { 'participants.$.role': 'admin' } },
+      { $set: { 'participants.$.role': 'admin' } }
     );
     await this.conversationModel.updateOne(
       { _id: conv._id, 'participants.userId': dto.newOwnerId },
-      { $set: { 'participants.$.role': 'owner' } },
+      { $set: { 'participants.$.role': 'owner' } }
     );
 
-    await this.insertSystemMessage(conv._id, `đã chuyển quyền Chủ nhóm`);
+    await this.insertSystemMessage(conv._id, `${actorName || '—'} đã chuyển quyền Chủ nhóm`);
 
     const participantIds = conv.participants.map((p) => p.userId);
     await this.kafkaProducer.emit(CHAT_EVENTS.GROUP_OWNER_TRANSFERRED, {
@@ -542,6 +613,7 @@ export class ChatService {
     const msg = await this.messageModel.create({
       conversationId,
       senderId: 'system',
+      type: 'system',
       content,
       attachments: [],
     });
@@ -555,7 +627,7 @@ export class ChatService {
           type: 'system',
           sentAt: msg.createdAt,
         },
-      },
+      }
     );
 
     // Emit to update conversation list in real-time
@@ -585,5 +657,274 @@ export class ChatService {
 
     if (!conv) throw new ForbiddenException('Bạn không thuộc cuộc trò chuyện này');
     return conv;
+  }
+
+  // ── New business features ────────────────────────────────────────────────
+
+  async editMessage(userId: string, messageId: string, dto: EditMessageDto) {
+    const message = await this.messageModel.findById(messageId);
+    if (!message) throw new NotFoundException('Tin nhắn không tồn tại');
+    if (message.senderId !== userId)
+      throw new ForbiddenException('Chỉ người gửi mới có thể chỉnh sửa');
+    if (message.revokedAt) throw new BadRequestException('Không thể sửa tin nhắn đã thu hồi');
+    if (message.type === 'system') throw new BadRequestException('Không thể sửa tin nhắn hệ thống');
+
+    const elapsed = Date.now() - message.createdAt.getTime();
+    if (elapsed > EDIT_WINDOW_MS) {
+      throw new BadRequestException('Chỉ có thể chỉnh sửa tin nhắn trong vòng 30 phút');
+    }
+
+    const oldContent = message.content;
+    message.content = dto.content.trim();
+    message.isEdited = true;
+    message.editedAt = new Date();
+    await message.save();
+
+    const conv = await this.conversationModel.findById(message.conversationId).lean();
+    const participantIds = conv?.participants.map((p) => p.userId) || [];
+
+    await this.kafkaProducer.emit(CHAT_EVENTS.MESSAGE_EDITED, {
+      messageId: message._id.toString(),
+      conversationId: message.conversationId.toString(),
+      participants: participantIds,
+      senderId: userId,
+      content: message.content,
+      oldContent,
+      editedAt: message.editedAt,
+    });
+
+    return message;
+  }
+
+  async pinMessage(userId: string, messageId: string, actorName = '') {
+    const message = await this.messageModel.findById(messageId).lean();
+    if (!message) throw new NotFoundException('Tin nhắn không tồn tại');
+    if (message.revokedAt) throw new BadRequestException('Không thể ghim tin nhắn đã thu hồi');
+
+    const conv = await this.conversationModel.findById(message.conversationId);
+    if (!conv) throw new NotFoundException('Cuộc trò chuyện không tồn tại');
+
+    const participant = conv.participants.find((p) => p.userId === userId);
+    if (!participant) throw new ForbiddenException('Bạn không thuộc cuộc trò chuyện này');
+
+    if (
+      conv.type === 'group' &&
+      (conv.settings as any)?.onlyAdminCanPin &&
+      participant.role === 'member'
+    ) {
+      throw new ForbiddenException('Chỉ quản trị viên mới có thể ghim tin nhắn trong nhóm này');
+    }
+
+    // Check already pinned
+    const alreadyPinned = conv.pinnedMessages?.some((p) => p.messageId === messageId);
+    if (alreadyPinned) throw new BadRequestException('Tin nhắn đã được ghim');
+
+    // Enforce max 50 pinned messages
+    if ((conv.pinnedMessages?.length ?? 0) >= MAX_PINNED_MESSAGES) {
+      throw new BadRequestException(`Chỉ có thể ghim tối đa ${MAX_PINNED_MESSAGES} tin nhắn`);
+    }
+
+    await this.conversationModel.updateOne(
+      { _id: conv._id },
+      { $push: { pinnedMessages: { messageId, pinnedBy: userId, pinnedAt: new Date() } } }
+    );
+
+    await this.insertSystemMessage(conv._id, `${actorName || '—'} đã ghim một tin nhắn`);
+
+    const participantIds = conv.participants.map((p) => p.userId);
+    await this.kafkaProducer.emit(CHAT_EVENTS.MESSAGE_PINNED, {
+      messageId,
+      conversationId: conv._id.toString(),
+      participants: participantIds,
+      pinnedBy: userId,
+    });
+
+    return { success: true };
+  }
+
+  async unpinMessage(userId: string, messageId: string, actorName = '') {
+    const message = await this.messageModel.findById(messageId).lean();
+    if (!message) throw new NotFoundException('Tin nhắn không tồn tại');
+
+    const conv = await this.conversationModel.findById(message.conversationId);
+    if (!conv) throw new NotFoundException('Cuộc trò chuyện không tồn tại');
+
+    const participant = conv.participants.find((p) => p.userId === userId);
+    if (!participant) throw new ForbiddenException('Bạn không thuộc cuộc trò chuyện này');
+
+    if (
+      conv.type === 'group' &&
+      (conv.settings as any)?.onlyAdminCanPin &&
+      participant.role === 'member'
+    ) {
+      throw new ForbiddenException('Chỉ quản trị viên mới có thể bỏ ghim tin nhắn trong nhóm này');
+    }
+
+    const wasPinned = conv.pinnedMessages?.some((p) => p.messageId === messageId);
+    if (!wasPinned) throw new BadRequestException('Tin nhắn không được ghim');
+
+    await this.conversationModel.updateOne(
+      { _id: conv._id },
+      { $pull: { pinnedMessages: { messageId } } }
+    );
+
+    await this.insertSystemMessage(conv._id, `${actorName || '—'} đã bỏ ghim một tin nhắn`);
+
+    const participantIds = conv.participants.map((p) => p.userId);
+    await this.kafkaProducer.emit(CHAT_EVENTS.MESSAGE_UNPINNED, {
+      messageId,
+      conversationId: conv._id.toString(),
+      participants: participantIds,
+      unpinnedBy: userId,
+    });
+
+    return { success: true };
+  }
+
+  async getPinnedMessages(
+    userId: string,
+    conversationId: string
+  ): Promise<Array<Record<string, unknown>>> {
+    const conv = await this.ensureParticipant(userId, conversationId);
+    if (!conv.pinnedMessages?.length) return [];
+
+    const messageIds = conv.pinnedMessages.map((p) => new Types.ObjectId(p.messageId));
+    const messages = await this.messageModel.find({ _id: { $in: messageIds } }).lean();
+
+    // Attach pinnedBy and pinnedAt metadata
+    return messages.map((msg) => {
+      const pin = conv.pinnedMessages.find((p) => p.messageId === msg._id.toString());
+      return { ...msg, pinnedBy: pin?.pinnedBy, pinnedAt: pin?.pinnedAt };
+    });
+  }
+
+  async updateSettings(userId: string, conversationId: string, dto: UpdateSettingsDto) {
+    const conv = await this.ensureGroupParticipant(userId, conversationId);
+    checkGroupRole(conv.participants, userId, ['owner']);
+
+    const updates: Record<string, boolean> = {};
+    if (dto.onlyAdminCanSend !== undefined)
+      updates['settings.onlyAdminCanSend'] = dto.onlyAdminCanSend;
+    if (dto.onlyAdminCanPin !== undefined)
+      updates['settings.onlyAdminCanPin'] = dto.onlyAdminCanPin;
+    if (dto.allowMemberInvite !== undefined)
+      updates['settings.allowMemberInvite'] = dto.allowMemberInvite;
+    if (dto.requireJoinApproval !== undefined)
+      updates['settings.requireJoinApproval'] = dto.requireJoinApproval;
+    if (dto.chatHistoryForNewMembers !== undefined)
+      updates['settings.chatHistoryForNewMembers'] = dto.chatHistoryForNewMembers;
+
+    if (Object.keys(updates).length === 0) throw new BadRequestException('Không có thay đổi nào');
+
+    await this.conversationModel.updateOne({ _id: conv._id }, { $set: updates });
+
+    const participantIds = conv.participants.map((p) => p.userId);
+    await this.kafkaProducer.emit(CHAT_EVENTS.CONVERSATION_SETTINGS_UPDATED, {
+      conversationId: conv._id.toString(),
+      participants: participantIds,
+      settings: dto,
+    });
+
+    return { success: true };
+  }
+
+  async banMember(
+    userId: string,
+    conversationId: string,
+    memberId: string,
+    dto: BanMemberDto,
+    actorName = ''
+  ) {
+    const conv = await this.ensureGroupParticipant(userId, conversationId);
+    checkGroupRole(conv.participants, userId, ['owner', 'admin']);
+
+    if (memberId === userId) throw new BadRequestException('Không thể tự ban mình');
+
+    const target = conv.participants.find((p) => p.userId === memberId);
+    if (!target) throw new BadRequestException('Thành viên không có trong nhóm');
+
+    const actor = conv.participants.find((p) => p.userId === userId);
+    if (actor?.role === 'admin' && (target.role === 'owner' || target.role === 'admin')) {
+      throw new ForbiddenException('Phó nhóm không thể ban Chủ nhóm hoặc Phó nhóm khác');
+    }
+
+    const bannedUntil = dto.bannedUntil ? new Date(dto.bannedUntil) : null;
+    await this.conversationModel.updateOne(
+      { _id: conv._id, 'participants.userId': memberId },
+      { $set: { 'participants.$.isBanned': true, 'participants.$.bannedUntil': bannedUntil } }
+    );
+
+    await this.insertSystemMessage(
+      conv._id,
+      `${actorName || '—'} đã cấm một thành viên gửi tin nhắn`
+    );
+
+    const participantIds = conv.participants.map((p) => p.userId);
+    await this.kafkaProducer.emit(CHAT_EVENTS.MEMBER_BANNED, {
+      conversationId: conv._id.toString(),
+      participants: participantIds,
+      bannedBy: userId,
+      memberId,
+      bannedUntil,
+    });
+
+    return { success: true };
+  }
+
+  async unbanMember(userId: string, conversationId: string, memberId: string, actorName = '') {
+    const conv = await this.ensureGroupParticipant(userId, conversationId);
+    checkGroupRole(conv.participants, userId, ['owner', 'admin']);
+
+    const target = conv.participants.find((p) => p.userId === memberId);
+    if (!target) throw new BadRequestException('Thành viên không có trong nhóm');
+    if (!target.isBanned) throw new BadRequestException('Thành viên không bị ban');
+
+    await this.conversationModel.updateOne(
+      { _id: conv._id, 'participants.userId': memberId },
+      { $set: { 'participants.$.isBanned': false, 'participants.$.bannedUntil': null } }
+    );
+
+    await this.insertSystemMessage(conv._id, `${actorName || '—'} đã bỏ cấm một thành viên`);
+
+    const participantIds = conv.participants.map((p) => p.userId);
+    await this.kafkaProducer.emit(CHAT_EVENTS.MEMBER_UNBANNED, {
+      conversationId: conv._id.toString(),
+      participants: participantIds,
+      unbannedBy: userId,
+      memberId,
+    });
+
+    return { success: true };
+  }
+
+  async updateMySettings(userId: string, conversationId: string, dto: UpdateMySettingsDto) {
+    const conv = await this.ensureParticipant(userId, conversationId);
+
+    const updates: Record<string, boolean | Date | null> = {};
+    if (dto.isPinned !== undefined) updates['participants.$.isPinned'] = dto.isPinned;
+    if (dto.isArchived !== undefined) updates['participants.$.isArchived'] = dto.isArchived;
+    if (dto.isMuted !== undefined) updates['participants.$.isMuted'] = dto.isMuted;
+    if (dto.muteUntil !== undefined)
+      updates['participants.$.muteUntil'] = dto.muteUntil ? new Date(dto.muteUntil) : null;
+
+    if (Object.keys(updates).length === 0) throw new BadRequestException('Không có thay đổi nào');
+
+    await this.conversationModel.updateOne(
+      { _id: conv._id, 'participants.userId': userId },
+      { $set: updates }
+    );
+
+    return { success: true };
+  }
+
+  async markAsRead(userId: string, conversationId: string) {
+    const conv = await this.ensureParticipant(userId, conversationId);
+
+    await this.conversationModel.updateOne(
+      { _id: conv._id, 'participants.userId': userId },
+      { $set: { 'participants.$.lastReadAt': new Date() } }
+    );
+
+    return { success: true };
   }
 }

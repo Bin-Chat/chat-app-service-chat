@@ -88,8 +88,17 @@ export class Message {
   @Prop({ required: true })
   senderId: string;
 
+  @Prop({ required: true, enum: ['text', 'image', 'video', 'file', 'voice', 'system'], default: 'text' })
+  type: 'text' | 'image' | 'video' | 'file' | 'voice' | 'system';
+
   @Prop({ default: '' })
   content: string;
+
+  @Prop({ default: false })
+  isEdited: boolean;
+
+  @Prop({ type: Date, default: null })
+  editedAt: Date | null;
 
   @Prop({ type: [Attachment], default: [] })
   attachments: Attachment[];
@@ -120,3 +129,5 @@ export const MessageSchema = SchemaFactory.createForClass(Message);
 
 // Compound index: paginate messages in a conversation by creation time
 MessageSchema.index({ conversationId: 1, createdAt: -1 });
+// Index for pinned messages lookup
+MessageSchema.index({ conversationId: 1, 'reactions.userId': 1 });

@@ -17,14 +17,17 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
 import { ChatService } from './chat.service';
 import { AddMembersDto } from './dto/add-members.dto';
+import { BanMemberDto } from './dto/ban-member.dto';
 import { ChangeRoleDto } from './dto/change-role.dto';
 import { CreateConversationDto } from './dto/create-conversation.dto';
+import { EditMessageDto } from './dto/edit-message.dto';
 import { ForwardMessageDto } from './dto/forward-message.dto';
 import { ReactMessageDto } from './dto/react-message.dto';
-import { RemoveMemberDto } from './dto/remove-member.dto';
 import { SendMessageDto } from './dto/send-message.dto';
 import { TransferOwnerDto } from './dto/transfer-owner.dto';
 import { UpdateGroupDto } from './dto/update-group.dto';
+import { UpdateMySettingsDto } from './dto/update-my-settings.dto';
+import { UpdateSettingsDto } from './dto/update-settings.dto';
 
 @Controller('chat')
 export class HealthController {
@@ -95,6 +98,37 @@ export class ChatController {
     return this.chatService.toggleReaction(req.user.sub, id, dto);
   }
 
+  @Patch('messages/:id')
+  editMessage(@Request() req, @Param('id') id: string, @Body() dto: EditMessageDto) {
+    return this.chatService.editMessage(req.user.sub, id, dto);
+  }
+
+  @Post('messages/:id/pin')
+  @HttpCode(HttpStatus.OK)
+  pinMessage(@Request() req, @Param('id') id: string) {
+    return this.chatService.pinMessage(req.user.sub, id, req.user.name);
+  }
+
+  @Delete('messages/:id/pin')
+  @HttpCode(HttpStatus.OK)
+  unpinMessage(@Request() req, @Param('id') id: string) {
+    return this.chatService.unpinMessage(req.user.sub, id, req.user.name);
+  }
+
+  @Get('conversations/:id/pinned')
+  getPinnedMessages(
+    @Request() req,
+    @Param('id') id: string
+  ): Promise<Array<Record<string, unknown>>> {
+    return this.chatService.getPinnedMessages(req.user.sub, id);
+  }
+
+  @Post('conversations/:id/read')
+  @HttpCode(HttpStatus.OK)
+  markAsRead(@Request() req, @Param('id') id: string) {
+    return this.chatService.markAsRead(req.user.sub, id);
+  }
+
   // ── Group Management ──────────────────────────────────────────────────
 
   @Get('conversations/:id/members')
@@ -104,39 +138,66 @@ export class ChatController {
 
   @Post('conversations/:id/members')
   addMembers(@Request() req, @Param('id') id: string, @Body() dto: AddMembersDto) {
-    return this.chatService.addMembers(req.user.sub, id, dto);
+    return this.chatService.addMembers(req.user.sub, id, dto, req.user.name);
   }
 
-  @Delete('conversations/:id/members')
+  @Delete('conversations/:id/members/:memberId')
   @HttpCode(HttpStatus.OK)
-  removeMember(@Request() req, @Param('id') id: string, @Body() dto: RemoveMemberDto) {
-    return this.chatService.removeMember(req.user.sub, id, dto);
+  removeMember(@Request() req, @Param('id') id: string, @Param('memberId') memberId: string) {
+    return this.chatService.removeMember(req.user.sub, id, memberId, req.user.name);
   }
 
   @Post('conversations/:id/leave')
   @HttpCode(HttpStatus.OK)
   leaveGroup(@Request() req, @Param('id') id: string) {
-    return this.chatService.leaveGroup(req.user.sub, id);
+    return this.chatService.leaveGroup(req.user.sub, id, req.user.name);
   }
 
   @Patch('conversations/:id')
   updateGroup(@Request() req, @Param('id') id: string, @Body() dto: UpdateGroupDto) {
-    return this.chatService.updateGroup(req.user.sub, id, dto);
+    return this.chatService.updateGroup(req.user.sub, id, dto, req.user.name);
   }
 
   @Patch('conversations/:id/role')
   changeRole(@Request() req, @Param('id') id: string, @Body() dto: ChangeRoleDto) {
-    return this.chatService.changeRole(req.user.sub, id, dto);
+    return this.chatService.changeRole(req.user.sub, id, dto, req.user.name);
   }
 
   @Patch('conversations/:id/transfer')
   transferOwnership(@Request() req, @Param('id') id: string, @Body() dto: TransferOwnerDto) {
-    return this.chatService.transferOwnership(req.user.sub, id, dto);
+    return this.chatService.transferOwnership(req.user.sub, id, dto, req.user.name);
   }
 
   @Delete('conversations/:id')
   @HttpCode(HttpStatus.OK)
   dissolveGroup(@Request() req, @Param('id') id: string) {
     return this.chatService.dissolveGroup(req.user.sub, id);
+  }
+
+  @Patch('conversations/:id/settings')
+  updateSettings(@Request() req, @Param('id') id: string, @Body() dto: UpdateSettingsDto) {
+    return this.chatService.updateSettings(req.user.sub, id, dto);
+  }
+
+  @Post('conversations/:id/members/:memberId/ban')
+  @HttpCode(HttpStatus.OK)
+  banMember(
+    @Request() req,
+    @Param('id') id: string,
+    @Param('memberId') memberId: string,
+    @Body() dto: BanMemberDto
+  ) {
+    return this.chatService.banMember(req.user.sub, id, memberId, dto, req.user.name);
+  }
+
+  @Delete('conversations/:id/members/:memberId/ban')
+  @HttpCode(HttpStatus.OK)
+  unbanMember(@Request() req, @Param('id') id: string, @Param('memberId') memberId: string) {
+    return this.chatService.unbanMember(req.user.sub, id, memberId, req.user.name);
+  }
+
+  @Patch('conversations/:id/me')
+  updateMySettings(@Request() req, @Param('id') id: string, @Body() dto: UpdateMySettingsDto) {
+    return this.chatService.updateMySettings(req.user.sub, id, dto);
   }
 }

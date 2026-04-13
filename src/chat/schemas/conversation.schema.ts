@@ -13,6 +13,29 @@ export class Participant {
 
   @Prop({ default: () => new Date() })
   joinedAt: Date;
+
+  // Ban
+  @Prop({ default: false })
+  isBanned: boolean;
+
+  @Prop({ type: Date, default: null })
+  bannedUntil: Date | null;
+
+  // Per-user conversation prefs
+  @Prop({ default: false })
+  isPinned: boolean;
+
+  @Prop({ default: false })
+  isArchived: boolean;
+
+  @Prop({ default: false })
+  isMuted: boolean;
+
+  @Prop({ type: Date, default: null })
+  muteUntil: Date | null;
+
+  @Prop({ type: Date, default: null })
+  lastReadAt: Date | null;
 }
 
 @Schema({ _id: false })
@@ -28,6 +51,33 @@ export class LastMessage {
 
   @Prop()
   sentAt: Date;
+}
+
+@Schema({ _id: false })
+export class ConversationSettings {
+  @Prop({ default: false })
+  onlyAdminCanSend: boolean;
+
+  @Prop({ default: true })
+  allowMemberInvite: boolean;
+
+  @Prop({ default: false })
+  requireJoinApproval: boolean;
+
+  @Prop({ default: true })
+  chatHistoryForNewMembers: boolean;
+}
+
+@Schema({ _id: false })
+export class PinnedMessage {
+  @Prop({ required: true })
+  messageId: string;
+
+  @Prop({ required: true })
+  pinnedBy: string;
+
+  @Prop({ default: () => new Date() })
+  pinnedAt: Date;
 }
 
 @Schema({ timestamps: true, collection: 'conversations' })
@@ -51,6 +101,12 @@ export class Conversation {
 
   @Prop()
   description?: string;
+
+  @Prop({ type: ConversationSettings, default: () => ({}) })
+  settings: ConversationSettings;
+
+  @Prop({ type: [PinnedMessage], default: [] })
+  pinnedMessages: PinnedMessage[];
 
   createdAt: Date;
   updatedAt: Date;

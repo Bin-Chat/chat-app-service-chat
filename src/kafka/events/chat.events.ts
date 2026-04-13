@@ -1,8 +1,14 @@
 export const CHAT_EVENTS = {
   MESSAGE_CREATED: 'chat.message.created',
   MESSAGE_REVOKED: 'chat.message.revoked',
+  MESSAGE_EDITED: 'chat.message.edited',
+  MESSAGE_PINNED: 'chat.message.pinned',
+  MESSAGE_UNPINNED: 'chat.message.unpinned',
   CONVERSATION_UPDATED: 'chat.conversation.updated',
+  CONVERSATION_SETTINGS_UPDATED: 'chat.conversation.settings_updated',
   REACTION_TOGGLED: 'chat.reaction.toggled',
+  MEMBER_BANNED: 'chat.member.banned',
+  MEMBER_UNBANNED: 'chat.member.unbanned',
   // Group events
   GROUP_MEMBERS_ADDED: 'chat.group.members_added',
   GROUP_MEMBER_REMOVED: 'chat.group.member_removed',
