@@ -1,5 +1,5 @@
-import { IsString, IsOptional, IsArray, ValidateNested, IsEnum } from 'class-validator';
 import { Type } from 'class-transformer';
+import { IsString, IsOptional, IsArray, ValidateNested, IsEnum } from 'class-validator';
 
 export class AttachmentDto {
   @IsString()
@@ -49,6 +49,10 @@ export class ReplyInfoDto {
 }
 
 export class SendMessageDto {
+  @IsOptional()
+  @IsString()
+  type?: string; // e.g. 'system' for call/group event messages
+
   @IsOptional()
   @IsString()
   content?: string;

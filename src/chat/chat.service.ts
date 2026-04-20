@@ -144,9 +144,9 @@ export class ChatService {
   async sendMessage(userId: string, conversationId: string, dto: SendMessageDto) {
     const conv = await this.ensureParticipant(userId, conversationId);
 
-    // Check if user is banned
+    // Check if user is banned (system messages bypass this check)
     const participant = conv.participants.find((p) => p.userId === userId);
-    if (participant?.isBanned) {
+    if (dto.type !== 'system' && participant?.isBanned) {
       const bannedUntil = participant.bannedUntil;
       if (!bannedUntil || bannedUntil > new Date()) {
         throw new ForbiddenException('Bạn đã bị cấm gửi tin nhắn trong nhóm này');
@@ -158,21 +158,26 @@ export class ChatService {
       );
     }
 
-    // Check onlyAdminCanSend setting for group chats
-    if (conv.type === 'group' && conv.settings?.onlyAdminCanSend) {
+    // Check onlyAdminCanSend setting for group chats (system messages bypass this check)
+    if (dto.type !== 'system' && conv.type === 'group' && conv.settings?.onlyAdminCanSend) {
       const role = participant?.role;
       if (role !== 'owner' && role !== 'admin') {
         throw new ForbiddenException('Chỉ admin mới được gửi tin nhắn trong nhóm này');
       }
     }
 
-    if (!dto.content?.trim() && (!dto.attachments || dto.attachments.length === 0)) {
+    if (
+      dto.type !== 'system' &&
+      !dto.content?.trim() &&
+      (!dto.attachments || dto.attachments.length === 0)
+    ) {
       throw new BadRequestException('Tin nhắn phải có nội dung hoặc file đính kèm');
     }
 
     const message = await this.messageModel.create({
       conversationId: conv._id,
       senderId: userId,
+      type: dto.type || 'text',
       content: dto.content?.trim() || '',
       attachments: dto.attachments || [],
       replyTo: dto.replyTo ?? null,
@@ -180,10 +185,11 @@ export class ChatService {
 
     // Update lastMessage on conversation
     const participantIds = conv.participants.map((p) => p.userId);
+    const msgType = message.type || 'text';
     const lastMessage = {
       senderId: userId,
       content: dto.content?.trim() || (dto.attachments?.length ? '[File]' : ''),
-      type: dto.attachments?.length ? dto.attachments[0].type : 'text',
+      type: msgType,
       sentAt: message.createdAt,
     };
 
@@ -196,7 +202,7 @@ export class ChatService {
       senderId: userId,
       participants: participantIds,
       content: message.content,
-      type: lastMessage.type,
+      type: msgType,
       attachments: message.attachments,
       replyTo: message.replyTo ?? null,
       createdAt: message.createdAt,

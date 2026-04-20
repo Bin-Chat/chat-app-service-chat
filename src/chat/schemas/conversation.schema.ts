@@ -113,8 +113,3 @@ export class Conversation {
 }
 
 export const ConversationSchema = SchemaFactory.createForClass(Conversation);
-
-// Index: efficiently find conversations for a participant
-ConversationSchema.index({ 'participants.userId': 1 });
-// Index: order by most recent message
-ConversationSchema.index({ 'lastMessage.sentAt': -1 });
