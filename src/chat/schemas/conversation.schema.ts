@@ -41,6 +41,9 @@ export class Participant {
 @Schema({ _id: false })
 export class LastMessage {
   @Prop()
+  messageId: string;
+
+  @Prop()
   senderId: string;
 
   @Prop()
@@ -51,6 +54,9 @@ export class LastMessage {
 
   @Prop()
   sentAt: Date;
+
+  @Prop({ type: Date, default: null })
+  revokedAt: Date | null;
 }
 
 @Schema({ _id: false })

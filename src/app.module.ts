@@ -4,6 +4,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 
 import { AuthModule } from './auth/auth.module';
 import { ChatModule } from './chat/chat.module';
+import { AiModerationConsumerModule } from './kafka/ai-moderation-consumer.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { ChatModule } from './chat/chat.module';
     }),
     AuthModule,
     ChatModule,
+    AiModerationConsumerModule,
   ],
 })
 export class AppModule {}

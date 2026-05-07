@@ -126,7 +126,11 @@ export class ChatService {
     };
 
     if (cursor) {
-      filter.createdAt = { $lt: new Date(cursor) };
+      const cursorDate = Array.isArray(cursor) ? new Date(cursor[0]) : new Date(cursor);
+      if (isNaN(cursorDate.getTime())) {
+        throw new BadRequestException('cursor không hợp lệ, phải là ISO date string');
+      }
+      filter.createdAt = { $lt: cursorDate };
     }
 
     const messages = await this.messageModel
@@ -187,10 +191,12 @@ export class ChatService {
     const participantIds = conv.participants.map((p) => p.userId);
     const msgType = message.type || 'text';
     const lastMessage = {
+      messageId: message._id.toString(),
       senderId: userId,
       content: dto.content?.trim() || (dto.attachments?.length ? '[File]' : ''),
       type: msgType,
       sentAt: message.createdAt,
+      revokedAt: null,
     };
 
     await this.conversationModel.updateOne({ _id: conv._id }, { lastMessage });
@@ -235,12 +241,21 @@ export class ChatService {
     const conv = await this.conversationModel.findById(message.conversationId);
     const participantIds = conv?.participants.map((p) => p.userId) || [];
 
+    // Update conv.lastMessage.revokedAt if this was the last message
+    if (conv?.lastMessage?.messageId === message._id.toString()) {
+      await this.conversationModel.updateOne(
+        { _id: message.conversationId },
+        { $set: { 'lastMessage.revokedAt': message.revokedAt } }
+      );
+    }
+
     await this.kafkaProducer.emit(CHAT_EVENTS.MESSAGE_REVOKED, {
       messageId: message._id.toString(),
       conversationId: message.conversationId.toString(),
       senderId: userId,
       participants: participantIds,
       revokedAt: message.revokedAt,
+      revokedBy: 'user',
       attachmentUrls: message.attachments?.map((a) => a.url) ?? [],
     });
 
