@@ -200,4 +200,23 @@ export class ChatController {
   updateMySettings(@Request() req, @Param('id') id: string, @Body() dto: UpdateMySettingsDto) {
     return this.chatService.updateMySettings(req.user.sub, id, dto);
   }
+
+  // ── Media / File / Link ────────────────────────────────────────────────
+
+  @Get('conversations/:id/media')
+  getConversationMedia(
+    @Request() req,
+    @Param('id') id: string,
+    @Query('type') type: 'image' | 'file' | 'link',
+    @Query('cursor') cursor?: string,
+    @Query('limit') limit?: string
+  ) {
+    return this.chatService.getConversationMedia(
+      req.user.sub,
+      id,
+      type ?? 'image',
+      cursor,
+      limit ? parseInt(limit, 10) : 20
+    );
+  }
 }

@@ -680,6 +680,139 @@ export class ChatService {
     return conv;
   }
 
+  // ── Media / File / Link ───────────────────────────────────────────────────
+
+  async getConversationMedia(
+    userId: string,
+    conversationId: string,
+    type: 'image' | 'file' | 'link',
+    cursor?: string,
+    limit = 20
+  ) {
+    const conv = await this.ensureParticipant(userId, conversationId);
+
+    const baseFilter: FilterQuery<MessageDocument> = {
+      conversationId: conv._id,
+      deletedFor: { $ne: userId },
+      revokedAt: null,
+    };
+
+    if (cursor) {
+      const cursorDate = new Date(cursor);
+      if (isNaN(cursorDate.getTime())) {
+        throw new BadRequestException('cursor không hợp lệ');
+      }
+      baseFilter.createdAt = { $lt: cursorDate };
+    }
+
+    if (type === 'image') {
+      const filter = { ...baseFilter, 'attachments.type': { $in: ['image', 'video'] } };
+      const messages = await this.messageModel
+        .find(filter)
+        .sort({ createdAt: -1 })
+        .limit(limit + 1)
+        .select('senderId attachments createdAt')
+        .lean();
+
+      const hasMore = messages.length > limit;
+      if (hasMore) messages.pop();
+
+      const items = messages.flatMap((m) =>
+        m.attachments
+          .filter((a) => a.type === 'image' || a.type === 'video')
+          .map((a) => ({
+            messageId: (m._id as Types.ObjectId).toString(),
+            senderId: m.senderId,
+            createdAt: m.createdAt,
+            url: a.url,
+            type: a.type,
+            thumbnailUrl: a.thumbnailUrl ?? null,
+            filename: a.filename,
+            size: a.size,
+          }))
+      );
+
+      return {
+        items,
+        hasMore,
+        nextCursor: messages.length ? messages[messages.length - 1].createdAt : null,
+      };
+    }
+
+    if (type === 'file') {
+      const filter = { ...baseFilter, 'attachments.type': 'file' };
+      const messages = await this.messageModel
+        .find(filter)
+        .sort({ createdAt: -1 })
+        .limit(limit + 1)
+        .select('senderId attachments createdAt')
+        .lean();
+
+      const hasMore = messages.length > limit;
+      if (hasMore) messages.pop();
+
+      const items = messages.flatMap((m) =>
+        m.attachments
+          .filter((a) => a.type === 'file')
+          .map((a) => ({
+            messageId: (m._id as Types.ObjectId).toString(),
+            senderId: m.senderId,
+            createdAt: m.createdAt,
+            url: a.url,
+            filename: a.filename,
+            size: a.size,
+            mimeType: a.mimeType,
+          }))
+      );
+
+      return {
+        items,
+        hasMore,
+        nextCursor: messages.length ? messages[messages.length - 1].createdAt : null,
+      };
+    }
+
+    // type === 'link'
+    const URL_REGEX = /https?:\/\/[^\s<>"']+/gi;
+    const filter = {
+      ...baseFilter,
+      type: 'text',
+      content: { $regex: 'https?://', $options: 'i' },
+    };
+    const messages = await this.messageModel
+      .find(filter)
+      .sort({ createdAt: -1 })
+      .limit(limit + 1)
+      .select('senderId content createdAt')
+      .lean();
+
+    const hasMore = messages.length > limit;
+    if (hasMore) messages.pop();
+
+    const items = messages.flatMap((m) => {
+      const urls = m.content?.match(URL_REGEX) ?? [];
+      return urls.map((url) => ({
+        messageId: (m._id as Types.ObjectId).toString(),
+        senderId: m.senderId,
+        createdAt: m.createdAt,
+        url,
+        domain: (() => {
+          try {
+            return new URL(url).hostname;
+          } catch {
+            return url;
+          }
+        })(),
+      }));
+    });
+
+    return {
+      items,
+      hasMore,
+      nextCursor: messages.length ? messages[messages.length - 1].createdAt : null,
+    };
+  }
+
   // ── New business features ────────────────────────────────────────────────
 
   async editMessage(userId: string, messageId: string, dto: EditMessageDto) {
