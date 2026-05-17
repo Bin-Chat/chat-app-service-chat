@@ -8,8 +8,8 @@ export class Attachment {
   @Prop({ required: true })
   url: string;
 
-  @Prop({ required: true, enum: ['image', 'video', 'file'] })
-  type: 'image' | 'video' | 'file';
+  @Prop({ required: true, enum: ['image', 'video', 'file', 'audio'] })
+  type: 'image' | 'video' | 'file' | 'audio';
 
   @Prop({ required: true })
   filename: string;
@@ -62,7 +62,7 @@ export class ReplyInfo {
   @Prop({ default: '' })
   content: string;
 
-  @Prop({ enum: ['image', 'video', 'file'] })
+  @Prop({ enum: ['image', 'video', 'file', 'audio'] })
   attachmentType?: string;
 }
 
@@ -90,10 +90,10 @@ export class Message {
 
   @Prop({
     required: true,
-    enum: ['text', 'image', 'video', 'file', 'voice', 'system'],
+    enum: ['text', 'image', 'video', 'file', 'voice', 'audio', 'system'],
     default: 'text',
   })
-  type: 'text' | 'image' | 'video' | 'file' | 'voice' | 'system';
+  type: 'text' | 'image' | 'video' | 'file' | 'voice' | 'audio' | 'system';
 
   @Prop({ default: '' })
   content: string;

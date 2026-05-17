@@ -6,7 +6,7 @@ export class AttachmentDto {
   url: string;
 
   @IsString()
-  type: 'image' | 'video' | 'file';
+  type: 'image' | 'video' | 'file' | 'audio';
 
   @IsString()
   filename: string;
