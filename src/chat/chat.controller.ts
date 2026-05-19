@@ -28,6 +28,10 @@ import { TransferOwnerDto } from './dto/transfer-owner.dto';
 import { UpdateGroupDto } from './dto/update-group.dto';
 import { UpdateMySettingsDto } from './dto/update-my-settings.dto';
 import { UpdateSettingsDto } from './dto/update-settings.dto';
+import { CreateReminderDto } from './dto/create-reminder.dto';
+import { UpdateReminderDto } from './dto/update-reminder.dto';
+import { RsvpReminderDto } from './dto/rsvp-reminder.dto';
+import { ReminderService } from './reminder.service';
 
 @Controller('chat')
 export class HealthController {
@@ -40,7 +44,10 @@ export class HealthController {
 @Controller('chat')
 @UseGuards(JwtAuthGuard)
 export class ChatController {
-  constructor(private chatService: ChatService) {}
+  constructor(
+    private chatService: ChatService,
+    private reminderService: ReminderService
+  ) {}
 
   // ── Conversations ───────────────────────────────────────────────────────
 
@@ -218,5 +225,51 @@ export class ChatController {
       cursor,
       limit ? parseInt(limit, 10) : 20
     );
+  }
+
+  // ── Reminders ──────────────────────────────────────────────────────────
+
+  @Post('conversations/:conversationId/reminders')
+  createReminder(
+    @Request() req,
+    @Param('conversationId') conversationId: string,
+    @Body() dto: CreateReminderDto
+  ) {
+    return this.reminderService.createReminder(req.user.sub, conversationId, dto);
+  }
+
+  @Get('conversations/:conversationId/reminders')
+  getReminders(@Request() req, @Param('conversationId') conversationId: string) {
+    return this.reminderService.getReminders(req.user.sub, conversationId);
+  }
+
+  @Patch('reminders/:reminderId')
+  updateReminder(
+    @Request() req,
+    @Param('reminderId') reminderId: string,
+    @Body() dto: UpdateReminderDto
+  ) {
+    return this.reminderService.updateReminder(req.user.sub, reminderId, dto);
+  }
+
+  @Delete('reminders/:reminderId')
+  deleteReminder(@Request() req, @Param('reminderId') reminderId: string) {
+    return this.reminderService.deleteReminder(req.user.sub, reminderId);
+  }
+
+  @Post('reminders/:reminderId/complete')
+  @HttpCode(HttpStatus.OK)
+  completeReminder(@Request() req, @Param('reminderId') reminderId: string) {
+    return this.reminderService.completeReminder(req.user.sub, reminderId);
+  }
+
+  @Post('reminders/:reminderId/rsvp')
+  @HttpCode(HttpStatus.OK)
+  rsvpReminder(
+    @Request() req,
+    @Param('reminderId') reminderId: string,
+    @Body() dto: RsvpReminderDto
+  ) {
+    return this.reminderService.rsvpReminder(req.user.sub, reminderId, dto.name, dto.status);
   }
 }

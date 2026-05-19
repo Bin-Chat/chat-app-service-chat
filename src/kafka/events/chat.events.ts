@@ -17,6 +17,10 @@ export const CHAT_EVENTS = {
   GROUP_ROLE_CHANGED: 'chat.group.role_changed',
   GROUP_DISSOLVED: 'chat.group.dissolved',
   GROUP_OWNER_TRANSFERRED: 'chat.group.owner_transferred',
+  // Reminders
+  REMINDER_FIRED: 'chat.reminder.fired',
+  REMINDER_UPDATED: 'chat.reminder.updated',
+  REMINDER_DELETED: 'chat.reminder.deleted',
 };
 
 export interface MessageCreatedEvent {

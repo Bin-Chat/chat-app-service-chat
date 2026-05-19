@@ -125,6 +125,9 @@ export class Message {
   @Prop({ type: [ReadReceipt], default: [] })
   readBy: ReadReceipt[];
 
+  @Prop({ type: Object, default: null })
+  metadata?: Record<string, any> | null;
+
   createdAt: Date;
   updatedAt: Date;
 }
