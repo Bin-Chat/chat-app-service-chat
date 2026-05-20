@@ -21,6 +21,10 @@ export const CHAT_EVENTS = {
   REMINDER_FIRED: 'chat.reminder.fired',
   REMINDER_UPDATED: 'chat.reminder.updated',
   REMINDER_DELETED: 'chat.reminder.deleted',
+  // Notes
+  NOTE_CREATED: 'chat.note.created',
+  NOTE_UPDATED: 'chat.note.updated',
+  NOTE_DELETED: 'chat.note.deleted',
 };
 
 export interface MessageCreatedEvent {

@@ -31,7 +31,10 @@ import { UpdateSettingsDto } from './dto/update-settings.dto';
 import { CreateReminderDto } from './dto/create-reminder.dto';
 import { UpdateReminderDto } from './dto/update-reminder.dto';
 import { RsvpReminderDto } from './dto/rsvp-reminder.dto';
+import { CreateNoteDto } from './dto/create-note.dto';
+import { UpdateNoteDto } from './dto/update-note.dto';
 import { ReminderService } from './reminder.service';
+import { NoteService } from './note.service';
 
 @Controller('chat')
 export class HealthController {
@@ -46,7 +49,8 @@ export class HealthController {
 export class ChatController {
   constructor(
     private chatService: ChatService,
-    private reminderService: ReminderService
+    private reminderService: ReminderService,
+    private noteService: NoteService
   ) {}
 
   // ── Conversations ───────────────────────────────────────────────────────
@@ -271,5 +275,32 @@ export class ChatController {
     @Body() dto: RsvpReminderDto
   ) {
     return this.reminderService.rsvpReminder(req.user.sub, reminderId, dto.name, dto.status);
+  }
+
+  // ── Notes ──────────────────────────────────────────────────────────────
+
+  @Post('conversations/:conversationId/notes')
+  createNote(
+    @Request() req,
+    @Param('conversationId') conversationId: string,
+    @Body() dto: CreateNoteDto
+  ) {
+    return this.noteService.createNote(req.user.sub, conversationId, dto, req.user.name);
+  }
+
+  @Get('conversations/:conversationId/notes')
+  getNotes(@Request() req, @Param('conversationId') conversationId: string) {
+    return this.noteService.getNotes(req.user.sub, conversationId);
+  }
+
+  @Patch('notes/:noteId')
+  updateNote(@Request() req, @Param('noteId') noteId: string, @Body() dto: UpdateNoteDto) {
+    return this.noteService.updateNote(req.user.sub, noteId, dto, req.user.name);
+  }
+
+  @Delete('notes/:noteId')
+  @HttpCode(HttpStatus.OK)
+  deleteNote(@Request() req, @Param('noteId') noteId: string) {
+    return this.noteService.deleteNote(req.user.sub, noteId, req.user.name);
   }
 }
