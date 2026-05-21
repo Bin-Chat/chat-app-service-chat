@@ -17,6 +17,10 @@ export const CHAT_EVENTS = {
   GROUP_ROLE_CHANGED: 'chat.group.role_changed',
   GROUP_DISSOLVED: 'chat.group.dissolved',
   GROUP_OWNER_TRANSFERRED: 'chat.group.owner_transferred',
+  // Group join approval events
+  GROUP_JOIN_REQUESTED: 'chat.group.join_requested',
+  GROUP_JOIN_APPROVED: 'chat.group.join_approved',
+  GROUP_JOIN_DECLINED: 'chat.group.join_declined',
   // Reminders
   REMINDER_FIRED: 'chat.reminder.fired',
   REMINDER_UPDATED: 'chat.reminder.updated',
@@ -121,4 +125,24 @@ export interface GroupOwnerTransferredEvent {
   oldOwnerId: string;
   newOwnerId: string;
   participants: string[];
+}
+
+export interface GroupJoinRequestedEvent {
+  conversationId: string;
+  requesterId: string;
+  adminIds: string[];
+  requestedAt: Date;
+}
+
+export interface GroupJoinApprovedEvent {
+  conversationId: string;
+  requesterId: string;
+  approvedBy: string;
+  allParticipantIds: string[];
+}
+
+export interface GroupJoinDeclinedEvent {
+  conversationId: string;
+  requesterId: string;
+  declinedBy: string;
 }

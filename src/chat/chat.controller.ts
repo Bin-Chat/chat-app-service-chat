@@ -149,6 +149,15 @@ export class ChatController {
 
   // ── Group Management ──────────────────────────────────────────────────
 
+  // NOTE: Static routes (join/:token) are declared before dynamic (:id/...) routes
+  // to avoid NestJS routing ambiguity.
+
+  @Post('conversations/join/:token')
+  @HttpCode(HttpStatus.OK)
+  joinByToken(@Request() req, @Param('token') token: string) {
+    return this.chatService.joinByToken(req.user.sub, token);
+  }
+
   @Get('conversations/:id/members')
   getGroupMembers(@Request() req, @Param('id') id: string) {
     return this.chatService.getGroupMembers(req.user.sub, id);
@@ -217,6 +226,57 @@ export class ChatController {
   @Patch('conversations/:id/me')
   updateMySettings(@Request() req, @Param('id') id: string, @Body() dto: UpdateMySettingsDto) {
     return this.chatService.updateMySettings(req.user.sub, id, dto);
+  }
+
+  // ── Invite Link ───────────────────────────────────────────────────────
+
+  @Post('conversations/:id/invite-link')
+  @HttpCode(HttpStatus.OK)
+  generateInviteLink(
+    @Request() req,
+    @Param('id') id: string,
+    @Body('regenerate') regenerate?: boolean
+  ) {
+    return this.chatService.generateInviteLink(req.user.sub, id, regenerate ?? false);
+  }
+
+  @Delete('conversations/:id/invite-link')
+  @HttpCode(HttpStatus.OK)
+  revokeInviteLink(@Request() req, @Param('id') id: string) {
+    return this.chatService.revokeInviteLink(req.user.sub, id);
+  }
+
+  // ── Join Requests (Pending Approval) ──────────────────────────────────
+
+  @Get('conversations/:id/join-requests')
+  getPendingJoinRequests(@Request() req, @Param('id') id: string) {
+    return this.chatService.getPendingJoinRequests(req.user.sub, id);
+  }
+
+  @Patch('conversations/:id/join-requests/:requesterId/approve')
+  @HttpCode(HttpStatus.OK)
+  approveJoinRequest(
+    @Request() req,
+    @Param('id') id: string,
+    @Param('requesterId') requesterId: string
+  ) {
+    return this.chatService.approveJoinRequest(req.user.sub, id, requesterId, req.user.name);
+  }
+
+  @Patch('conversations/:id/join-requests/:requesterId/decline')
+  @HttpCode(HttpStatus.OK)
+  declineJoinRequest(
+    @Request() req,
+    @Param('id') id: string,
+    @Param('requesterId') requesterId: string
+  ) {
+    return this.chatService.declineJoinRequest(req.user.sub, id, requesterId);
+  }
+
+  @Delete('conversations/:id/join-requests/me')
+  @HttpCode(HttpStatus.OK)
+  cancelJoinRequest(@Request() req, @Param('id') id: string) {
+    return this.chatService.cancelJoinRequest(req.user.sub, id);
   }
 
   // ── Media / File / Link ────────────────────────────────────────────────

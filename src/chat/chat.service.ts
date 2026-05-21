@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { FilterQuery, Model, Types } from 'mongoose';
+import { randomUUID } from 'crypto';
 
 import { CHAT_EVENTS } from '../kafka/events/chat.events';
 import { KafkaProducerService } from '../kafka/kafka-producer.service';
@@ -390,9 +391,37 @@ export class ChatService {
     }
 
     const existingIds = new Set(conv.participants.map((p) => p.userId));
+    const pendingIds = new Set((conv.pendingMembers ?? []).map((p) => p.userId));
     const newIds = dto.memberIds.filter((id) => !existingIds.has(id));
     if (newIds.length === 0) {
       throw new BadRequestException('Tất cả thành viên đã có trong nhóm');
+    }
+
+    // If a regular member is adding AND requireJoinApproval is on → pending queue
+    if (actor.role === 'member' && conv.settings?.requireJoinApproval) {
+      const toQueue = newIds.filter((id) => !pendingIds.has(id));
+      if (toQueue.length === 0) {
+        throw new BadRequestException('Những thành viên này đã có trong danh sách chờ duyệt');
+      }
+      const now = new Date();
+      const pendingEntries = toQueue.map((id) => ({ userId: id, requestedAt: now }));
+      await this.conversationModel.updateOne(
+        { _id: conv._id },
+        { $push: { pendingMembers: { $each: pendingEntries } } }
+      );
+      // Notify admins/owner for each requester
+      const adminIds = conv.participants
+        .filter((p) => p.role === 'owner' || p.role === 'admin')
+        .map((p) => p.userId);
+      for (const requesterId of toQueue) {
+        await this.kafkaProducer.emit(CHAT_EVENTS.GROUP_JOIN_REQUESTED, {
+          conversationId: conv._id.toString(),
+          requesterId,
+          adminIds,
+          requestedAt: now.toISOString(),
+        });
+      }
+      return { success: true, pendingCount: toQueue.length, status: 'pending' };
     }
 
     const now = new Date();
@@ -571,6 +600,15 @@ export class ChatService {
     }
     if (target.userId === userId) {
       throw new BadRequestException('Bạn đã là Chủ nhóm');
+    }
+
+    // Demote current owner to admin, promote new owner
+    // If new owner was banned → remove ban first
+    if (target.isBanned) {
+      await this.conversationModel.updateOne(
+        { _id: conv._id, 'participants.userId': dto.newOwnerId },
+        { $set: { 'participants.$.isBanned': false, 'participants.$.bannedUntil': null } }
+      );
     }
 
     // Demote current owner to admin, promote new owner
@@ -1077,6 +1115,171 @@ export class ChatService {
     await this.conversationModel.updateOne(
       { _id: conv._id, 'participants.userId': userId },
       { $set: { 'participants.$.lastReadAt': new Date() } }
+    );
+
+    return { success: true };
+  }
+
+  // ── Join Approval ─────────────────────────────────────────────────────
+
+  async generateInviteLink(userId: string, conversationId: string, regenerate = false) {
+    const conv = await this.ensureGroupParticipant(userId, conversationId);
+    checkGroupRole(conv.participants, userId, ['owner', 'admin']);
+
+    let token = conv.inviteToken;
+    if (!token || regenerate) {
+      token = randomUUID();
+    }
+
+    await this.conversationModel.updateOne(
+      { _id: conv._id },
+      { $set: { inviteToken: token, inviteEnabled: true } }
+    );
+
+    return { inviteToken: token, inviteEnabled: true };
+  }
+
+  async revokeInviteLink(userId: string, conversationId: string) {
+    const conv = await this.ensureGroupParticipant(userId, conversationId);
+    checkGroupRole(conv.participants, userId, ['owner', 'admin']);
+
+    await this.conversationModel.updateOne({ _id: conv._id }, { $set: { inviteEnabled: false } });
+
+    return { success: true };
+  }
+
+  async joinByToken(requesterId: string, token: string) {
+    const conv = await this.conversationModel
+      .findOne({ inviteToken: token, inviteEnabled: true, type: 'group' })
+      .lean();
+
+    if (!conv) throw new NotFoundException('Link mời không hợp lệ hoặc đã bị vô hiệu hóa');
+
+    const isAlreadyMember = conv.participants.some((p) => p.userId === requesterId);
+    if (isAlreadyMember) throw new BadRequestException('Bạn đã là thành viên của nhóm này');
+
+    const isAlreadyPending = (conv.pendingMembers ?? []).some((p) => p.userId === requesterId);
+    if (isAlreadyPending) throw new BadRequestException('Yêu cầu của bạn đang chờ được duyệt');
+
+    const conversationId = conv._id.toString();
+
+    if (!conv.settings?.requireJoinApproval) {
+      const now = new Date();
+      await this.conversationModel.updateOne(
+        { _id: conv._id },
+        { $push: { participants: { userId: requesterId, role: 'member', joinedAt: now } } }
+      );
+
+      const allParticipantIds = [...conv.participants.map((p) => p.userId), requesterId];
+      await this.kafkaProducer.emit(CHAT_EVENTS.GROUP_MEMBERS_ADDED, {
+        conversationId,
+        addedBy: requesterId,
+        newMemberIds: [requesterId],
+        participants: allParticipantIds,
+      });
+
+      return { status: 'joined', conversationId };
+    }
+
+    // requireJoinApproval = true → add to pending queue
+    const requestedAt = new Date();
+    await this.conversationModel.updateOne(
+      { _id: conv._id },
+      { $push: { pendingMembers: { userId: requesterId, requestedAt } } }
+    );
+
+    const adminIds = conv.participants
+      .filter((p) => p.role === 'owner' || p.role === 'admin')
+      .map((p) => p.userId);
+
+    await this.kafkaProducer.emit(CHAT_EVENTS.GROUP_JOIN_REQUESTED, {
+      conversationId,
+      requesterId,
+      adminIds,
+      requestedAt,
+    });
+
+    return { status: 'pending', conversationId };
+  }
+
+  async getPendingJoinRequests(userId: string, conversationId: string) {
+    const conv = await this.ensureGroupParticipant(userId, conversationId);
+    checkGroupRole(conv.participants, userId, ['owner', 'admin']);
+    return conv.pendingMembers ?? [];
+  }
+
+  async approveJoinRequest(
+    userId: string,
+    conversationId: string,
+    requesterId: string,
+    actorName = ''
+  ) {
+    const conv = await this.ensureGroupParticipant(userId, conversationId);
+    checkGroupRole(conv.participants, userId, ['owner', 'admin']);
+
+    const isPending = (conv.pendingMembers ?? []).some((p) => p.userId === requesterId);
+    if (!isPending) throw new NotFoundException('Không tìm thấy yêu cầu tham gia');
+
+    const now = new Date();
+    await this.conversationModel.updateOne(
+      { _id: conv._id },
+      {
+        $pull: { pendingMembers: { userId: requesterId } },
+        $push: { participants: { userId: requesterId, role: 'member', joinedAt: now } },
+      }
+    );
+
+    await this.insertSystemMessage(
+      conv._id,
+      `${actorName || '—'} đã duyệt một thành viên vào nhóm`
+    );
+
+    const allParticipantIds = [...conv.participants.map((p) => p.userId), requesterId];
+    await this.kafkaProducer.emit(CHAT_EVENTS.GROUP_JOIN_APPROVED, {
+      conversationId: conv._id.toString(),
+      requesterId,
+      approvedBy: userId,
+      allParticipantIds,
+    });
+
+    return { success: true };
+  }
+
+  async declineJoinRequest(userId: string, conversationId: string, requesterId: string) {
+    const conv = await this.ensureGroupParticipant(userId, conversationId);
+    checkGroupRole(conv.participants, userId, ['owner', 'admin']);
+
+    const isPending = (conv.pendingMembers ?? []).some((p) => p.userId === requesterId);
+    if (!isPending) throw new NotFoundException('Không tìm thấy yêu cầu tham gia');
+
+    await this.conversationModel.updateOne(
+      { _id: conv._id },
+      { $pull: { pendingMembers: { userId: requesterId } } }
+    );
+
+    await this.kafkaProducer.emit(CHAT_EVENTS.GROUP_JOIN_DECLINED, {
+      conversationId: conv._id.toString(),
+      requesterId,
+      declinedBy: userId,
+    });
+
+    return { success: true };
+  }
+
+  async cancelJoinRequest(userId: string, conversationId: string) {
+    const conv = await this.conversationModel
+      .findOne({
+        _id: new Types.ObjectId(conversationId),
+        type: 'group',
+        'pendingMembers.userId': userId,
+      })
+      .lean();
+
+    if (!conv) throw new NotFoundException('Không tìm thấy yêu cầu tham gia');
+
+    await this.conversationModel.updateOne(
+      { _id: conv._id },
+      { $pull: { pendingMembers: { userId } } }
     );
 
     return { success: true };

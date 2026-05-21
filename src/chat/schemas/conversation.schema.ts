@@ -75,6 +75,15 @@ export class ConversationSettings {
 }
 
 @Schema({ _id: false })
+export class PendingMember {
+  @Prop({ required: true })
+  userId: string;
+
+  @Prop({ default: () => new Date() })
+  requestedAt: Date;
+}
+
+@Schema({ _id: false })
 export class PinnedMessage {
   @Prop({ required: true })
   messageId: string;
@@ -113,6 +122,15 @@ export class Conversation {
 
   @Prop({ type: [PinnedMessage], default: [] })
   pinnedMessages: PinnedMessage[];
+
+  @Prop({ type: [PendingMember], default: [] })
+  pendingMembers: PendingMember[];
+
+  @Prop({ type: String, default: null })
+  inviteToken: string | null;
+
+  @Prop({ default: false })
+  inviteEnabled: boolean;
 
   createdAt: Date;
   updatedAt: Date;
