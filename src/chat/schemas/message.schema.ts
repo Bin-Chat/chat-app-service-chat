@@ -90,10 +90,10 @@ export class Message {
 
   @Prop({
     required: true,
-    enum: ['text', 'image', 'video', 'file', 'voice', 'audio', 'system'],
+    enum: ['text', 'image', 'video', 'file', 'voice', 'audio', 'system', 'poll'],
     default: 'text',
   })
-  type: 'text' | 'image' | 'video' | 'file' | 'voice' | 'audio' | 'system';
+  type: 'text' | 'image' | 'video' | 'file' | 'voice' | 'audio' | 'system' | 'poll';
 
   @Prop({ default: '' })
   content: string;

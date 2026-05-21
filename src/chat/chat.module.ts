@@ -8,10 +8,12 @@ import { Conversation, ConversationSchema } from './schemas/conversation.schema'
 import { Message, MessageSchema } from './schemas/message.schema';
 import { Reminder, ReminderSchema } from './schemas/reminder.schema';
 import { Note, NoteSchema } from './schemas/note.schema';
+import { Poll, PollSchema } from './schemas/poll.schema';
 import { ChatController, HealthController } from './chat.controller';
 import { ChatService } from './chat.service';
 import { ReminderService } from './reminder.service';
 import { NoteService } from './note.service';
+import { PollService } from './poll.service';
 
 @Module({
   imports: [
@@ -20,12 +22,13 @@ import { NoteService } from './note.service';
       { name: Message.name, schema: MessageSchema },
       { name: Reminder.name, schema: ReminderSchema },
       { name: Note.name, schema: NoteSchema },
+      { name: Poll.name, schema: PollSchema },
     ]),
     AuthModule,
     KafkaProducerModule,
   ],
-  providers: [ChatService, ReminderService, NoteService],
+  providers: [ChatService, ReminderService, NoteService, PollService],
   controllers: [HealthController, ChatController],
-  exports: [ChatService, ReminderService, NoteService],
+  exports: [ChatService, ReminderService, NoteService, PollService],
 })
 export class ChatModule {}

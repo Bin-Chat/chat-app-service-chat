@@ -33,8 +33,14 @@ import { UpdateReminderDto } from './dto/update-reminder.dto';
 import { RsvpReminderDto } from './dto/rsvp-reminder.dto';
 import { CreateNoteDto } from './dto/create-note.dto';
 import { UpdateNoteDto } from './dto/update-note.dto';
+import { CreatePollDto } from './dto/create-poll.dto';
+import { UpdatePollDto } from './dto/update-poll.dto';
+import { VotePollDto } from './dto/vote-poll.dto';
+import { AddPollOptionDto } from './dto/add-poll-option.dto';
+import { UpdatePollOptionDto } from './dto/update-poll-option.dto';
 import { ReminderService } from './reminder.service';
 import { NoteService } from './note.service';
+import { PollService } from './poll.service';
 
 @Controller('chat')
 export class HealthController {
@@ -50,7 +56,8 @@ export class ChatController {
   constructor(
     private chatService: ChatService,
     private reminderService: ReminderService,
-    private noteService: NoteService
+    private noteService: NoteService,
+    private pollService: PollService
   ) {}
 
   // ── Conversations ───────────────────────────────────────────────────────
@@ -302,5 +309,76 @@ export class ChatController {
   @HttpCode(HttpStatus.OK)
   deleteNote(@Request() req, @Param('noteId') noteId: string) {
     return this.noteService.deleteNote(req.user.sub, noteId, req.user.name);
+  }
+
+  // ── Polls ──────────────────────────────────────────────────────────────
+
+  @Post('conversations/:conversationId/polls')
+  createPoll(
+    @Request() req,
+    @Param('conversationId') conversationId: string,
+    @Body() dto: CreatePollDto
+  ) {
+    return this.pollService.createPoll(req.user.sub, conversationId, dto, req.user.name);
+  }
+
+  @Get('conversations/:conversationId/polls')
+  getPollsByConversation(@Request() req, @Param('conversationId') conversationId: string) {
+    return this.pollService.getPollsByConversation(req.user.sub, conversationId);
+  }
+
+  @Get('polls/:pollId')
+  getPoll(@Request() req, @Param('pollId') pollId: string) {
+    return this.pollService.getPoll(req.user.sub, pollId);
+  }
+
+  @Post('polls/:pollId/vote')
+  @HttpCode(HttpStatus.OK)
+  votePoll(@Request() req, @Param('pollId') pollId: string, @Body() dto: VotePollDto) {
+    return this.pollService.vote(req.user.sub, pollId, dto);
+  }
+
+  @Post('polls/:pollId/options')
+  addPollOption(@Request() req, @Param('pollId') pollId: string, @Body() dto: AddPollOptionDto) {
+    return this.pollService.addOption(req.user.sub, pollId, dto);
+  }
+
+  @Patch('polls/:pollId/options/:optionId')
+  @HttpCode(HttpStatus.OK)
+  updatePollOption(
+    @Request() req,
+    @Param('pollId') pollId: string,
+    @Param('optionId') optionId: string,
+    @Body() dto: UpdatePollOptionDto
+  ) {
+    return this.pollService.updateOption(req.user.sub, pollId, optionId, dto);
+  }
+
+  @Delete('polls/:pollId/options/:optionId')
+  @HttpCode(HttpStatus.OK)
+  deletePollOption(
+    @Request() req,
+    @Param('pollId') pollId: string,
+    @Param('optionId') optionId: string
+  ) {
+    return this.pollService.deleteOption(req.user.sub, pollId, optionId);
+  }
+
+  @Patch('polls/:pollId')
+  @HttpCode(HttpStatus.OK)
+  updatePoll(@Request() req, @Param('pollId') pollId: string, @Body() dto: UpdatePollDto) {
+    return this.pollService.updatePoll(req.user.sub, pollId, dto);
+  }
+
+  @Patch('polls/:pollId/close')
+  @HttpCode(HttpStatus.OK)
+  closePoll(@Request() req, @Param('pollId') pollId: string) {
+    return this.pollService.closePoll(req.user.sub, pollId);
+  }
+
+  @Delete('polls/:pollId')
+  @HttpCode(HttpStatus.OK)
+  deletePoll(@Request() req, @Param('pollId') pollId: string) {
+    return this.pollService.deletePoll(req.user.sub, pollId);
   }
 }

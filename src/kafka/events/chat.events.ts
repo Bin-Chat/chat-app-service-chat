@@ -25,6 +25,13 @@ export const CHAT_EVENTS = {
   NOTE_CREATED: 'chat.note.created',
   NOTE_UPDATED: 'chat.note.updated',
   NOTE_DELETED: 'chat.note.deleted',
+  // Polls
+  POLL_CREATED: 'chat.poll.created',
+  POLL_VOTED: 'chat.poll.voted',
+  POLL_OPTION_ADDED: 'chat.poll.option_added',
+  POLL_UPDATED: 'chat.poll.updated',
+  POLL_CLOSED: 'chat.poll.closed',
+  POLL_DELETED: 'chat.poll.deleted',
 };
 
 export interface MessageCreatedEvent {
