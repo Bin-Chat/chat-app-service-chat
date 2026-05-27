@@ -381,6 +381,20 @@ export class ChatService {
     return conv.participants;
   }
 
+  /** Internal: no auth check — called by AI service to resolve @mentions */
+  async getConversationMembersInternal(conversationId: string) {
+    const conv = await this.conversationModel
+      .findById(conversationId)
+      .select('participants')
+      .lean();
+    if (!conv) return [];
+    return (conv.participants ?? []).map((p: any) => ({
+      userId: p.userId,
+      fullName: p.fullName ?? p.userId,
+      role: p.role ?? 'member',
+    }));
+  }
+
   async addMembers(userId: string, conversationId: string, dto: AddMembersDto, actorName = '') {
     const conv = await this.ensureGroupParticipant(userId, conversationId);
     const actor = checkGroupRole(conv.participants, userId, ['owner', 'admin', 'member']);

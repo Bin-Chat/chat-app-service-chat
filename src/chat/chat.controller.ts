@@ -38,9 +38,13 @@ import { UpdatePollDto } from './dto/update-poll.dto';
 import { VotePollDto } from './dto/vote-poll.dto';
 import { AddPollOptionDto } from './dto/add-poll-option.dto';
 import { UpdatePollOptionDto } from './dto/update-poll-option.dto';
+import { CreateTaskDto } from './dto/create-task.dto';
+import { UpdateTaskDto } from './dto/update-task.dto';
+import { AddTaskCommentDto } from './dto/add-task-comment.dto';
 import { ReminderService } from './reminder.service';
 import { NoteService } from './note.service';
 import { PollService } from './poll.service';
+import { TaskService } from './task.service';
 
 @Controller('chat')
 export class HealthController {
@@ -57,7 +61,8 @@ export class ChatController {
     private chatService: ChatService,
     private reminderService: ReminderService,
     private noteService: NoteService,
-    private pollService: PollService
+    private pollService: PollService,
+    private taskService: TaskService
   ) {}
 
   // ── Conversations ───────────────────────────────────────────────────────
@@ -440,5 +445,56 @@ export class ChatController {
   @HttpCode(HttpStatus.OK)
   deletePoll(@Request() req, @Param('pollId') pollId: string) {
     return this.pollService.deletePoll(req.user.sub, pollId);
+  }
+
+  // ── Tasks ──────────────────────────────────────────────────────────────
+
+  @Post('conversations/:conversationId/tasks')
+  createTask(
+    @Request() req,
+    @Param('conversationId') conversationId: string,
+    @Body() dto: CreateTaskDto
+  ) {
+    return this.taskService.createTask(req.user.sub, conversationId, dto, req.user.name);
+  }
+
+  @Get('conversations/:conversationId/tasks')
+  getTasks(
+    @Request() req,
+    @Param('conversationId') conversationId: string,
+    @Query('status') status?: string
+  ) {
+    return this.taskService.getTasks(req.user.sub, conversationId, status);
+  }
+
+  @Get('conversations/:conversationId/tasks/stats')
+  getTaskStats(@Request() req, @Param('conversationId') conversationId: string) {
+    return this.taskService.getTaskStats(req.user.sub, conversationId);
+  }
+
+  @Patch('tasks/:taskId')
+  updateTask(@Request() req, @Param('taskId') taskId: string, @Body() dto: UpdateTaskDto) {
+    return this.taskService.updateTask(req.user.sub, taskId, dto);
+  }
+
+  @Post('tasks/:taskId/complete')
+  @HttpCode(HttpStatus.OK)
+  completeTask(@Request() req, @Param('taskId') taskId: string) {
+    return this.taskService.completeTask(req.user.sub, taskId, req.user.name);
+  }
+
+  @Delete('tasks/:taskId')
+  @HttpCode(HttpStatus.OK)
+  deleteTask(@Request() req, @Param('taskId') taskId: string) {
+    return this.taskService.deleteTask(req.user.sub, taskId);
+  }
+
+  @Post('tasks/:taskId/comments')
+  addTaskComment(
+    @Request() req,
+    @Param('taskId') taskId: string,
+    @Body() dto: AddTaskCommentDto
+  ) {
+    return this.taskService.addComment(req.user.sub, taskId, dto);
   }
 }

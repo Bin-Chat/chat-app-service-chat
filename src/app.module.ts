@@ -5,6 +5,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 
 import { AuthModule } from './auth/auth.module';
 import { ChatModule } from './chat/chat.module';
+import { AgentReplyConsumerModule } from './kafka/agent-reply-consumer.module';
 import { AiModerationConsumerModule } from './kafka/ai-moderation-consumer.module';
 
 @Module({
@@ -20,6 +21,7 @@ import { AiModerationConsumerModule } from './kafka/ai-moderation-consumer.modul
     AuthModule,
     ChatModule,
     AiModerationConsumerModule,
+    AgentReplyConsumerModule,
   ],
 })
 export class AppModule {}

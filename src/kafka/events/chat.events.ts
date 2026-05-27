@@ -36,6 +36,12 @@ export const CHAT_EVENTS = {
   POLL_UPDATED: 'chat.poll.updated',
   POLL_CLOSED: 'chat.poll.closed',
   POLL_DELETED: 'chat.poll.deleted',
+  // Tasks
+  TASK_CREATED: 'chat.task.created',
+  TASK_UPDATED: 'chat.task.updated',
+  TASK_COMPLETED: 'chat.task.completed',
+  TASK_DELETED: 'chat.task.deleted',
+  TASK_ASSIGNED: 'chat.task.assigned',
 };
 
 export interface MessageCreatedEvent {
